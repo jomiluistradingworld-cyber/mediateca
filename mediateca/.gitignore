@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+config.toml
+.DS_Store
+*.egg-info/
+build/
+dist/

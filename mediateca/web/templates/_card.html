@@ -1,0 +1,15 @@
+<a class="card" href="/item/{{ item.id }}">
+  <div class="card-thumb">
+    {% if item.thumbnail_path %}
+    <img src="/media/{{ item.thumbnail_path|urlpath }}" alt="" loading="lazy">
+    {% else %}
+    <div class="card-thumb-placeholder">{{ item.media_type[:1]|upper }}</div>
+    {% endif %}
+    <span class="badge badge-duration">{{ item.duration|duration }}</span>
+  </div>
+  <div class="card-body">
+    <h3 class="card-title">{{ item.title }}</h3>
+    <p class="card-meta">{{ item.uploader or "Autor desconocido" }}</p>
+    <span class="badge badge-platform">{{ item.extractor }}</span>
+  </div>
+</a>

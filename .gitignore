@@ -1,0 +1,11 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+*.db
+*.sqlite3
+*.sqlite3-journal
+mediateca.zip

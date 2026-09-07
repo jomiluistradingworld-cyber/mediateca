@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Descargar · mediateca{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Añadir a la biblioteca</h1>
+  <p class="muted">Pega una o varias URLs, una por línea. Cada una se descarga por separado.</p>
+</div>
+
+<form id="download-form" class="download-form">
+  <textarea id="urls" name="urls" rows="4" placeholder="https://…" required></textarea>
+
+  <div class="form-row">
+    <label class="field">
+      <span>Calidad</span>
+      <select id="quality" name="quality">
+        <option value="best" selected>Máxima disponible</option>
+        <option value="1080">Hasta 1080p</option>
+        <option value="720">Hasta 720p</option>
+        <option value="480">Hasta 480p</option>
+      </select>
+    </label>
+
+    <label class="checkbox-field">
+      <input type="checkbox" id="audio-only" name="audio_only">
+      <span>Solo audio</span>
+    </label>
+
+    <button type="submit" class="btn-primary">Descargar</button>
+  </div>
+</form>
+
+<div id="jobs" class="jobs"></div>
+<p id="jobs-empty" class="muted small" style="display:none;">Sin descargas recientes.</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  mediateca.initDownloadPage();
+</script>
+{% endblock %}
