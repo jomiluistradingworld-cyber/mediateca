@@ -122,10 +122,3 @@ Este MVP prioriza simplicidad. Ideas para ir hacia "experto" cuando quieras:
 - **Autenticación básica** en la web si algún día la expones fuera de
   `127.0.0.1` (hoy está pensada solo para uso local).
 
-## Nota
-
-Esta herramienta es de uso personal: para tu propio contenido, material de
-dominio público o con licencia abierta, y archivo privado de cosas que ya
-tienes derecho a ver. Cómo la uses depende de ti; respeta los términos de
-servicio de cada plataforma y los derechos de autor del contenido que
-descargues.

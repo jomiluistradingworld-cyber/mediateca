@@ -9,16 +9,16 @@ library_path = "~/Mediateca"
 db_path = "~/.local/share/mediateca/mediateca.db"
 
 # Calidad por defecto para video: "best", "1080", "720", "480"
-default_quality = "best"
+default_quality = "1080"
 
 # Formato de audio por defecto cuando se pide solo audio: "mp3", "m4a", "opus"
-default_audio_format = "mp3"
+default_audio_format = "opus"
 
 # Descargar y guardar la miniatura localmente (biblioteca 100% offline)
 download_thumbnails = true
 
 # Cuántas descargas simultáneas permite el servidor web
-concurrent_downloads = 2
+concurrent_downloads = 1
 
 # Host y puerto por defecto del servidor web local
 host = "127.0.0.1"
