@@ -9,8 +9,17 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, Optional
+
+# La app web comparte UNA sola conexión entre el hilo de FastAPI y los hilos
+# worker de descarga (ver web/app.py). sqlite3.Connection no está pensada
+# para que varios hilos la usen a la vez sin coordinarse, así que serializamos
+# aquí todo acceso con un lock reentrante (RLock: algunas funciones, como
+# search_items, llaman internamente a otra función de este módulo que también
+# toma el lock, y con un Lock normal eso sería un deadlock).
+_LOCK = threading.RLock()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -82,7 +91,11 @@ _fts_enabled_cache: Optional[bool] = None
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    # check_same_thread=False: esta conexión se crea una vez por proceso y se
+    # comparte entre el hilo de peticiones de FastAPI y los hilos worker de
+    # descarga. Todo el acceso concurrente se serializa con _LOCK más abajo,
+    # así que es seguro desactivar la comprobación de hilo único de sqlite3.
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -95,14 +108,15 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> bool:
     """Crea las tablas si no existen. Devuelve True si FTS5 quedó activo."""
     global _fts_enabled_cache
-    conn.executescript(SCHEMA)
-    try:
-        conn.executescript(FTS_SCHEMA)
-        _fts_enabled_cache = True
-    except sqlite3.OperationalError:
-        _fts_enabled_cache = False
-    conn.commit()
-    return bool(_fts_enabled_cache)
+    with _LOCK:
+        conn.executescript(SCHEMA)
+        try:
+            conn.executescript(FTS_SCHEMA)
+            _fts_enabled_cache = True
+        except sqlite3.OperationalError:
+            _fts_enabled_cache = False
+        conn.commit()
+        return bool(_fts_enabled_cache)
 
 
 def fts_enabled() -> bool:
@@ -124,22 +138,25 @@ def insert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
             v = json.dumps(v, ensure_ascii=False)
         values.append(v)
     placeholders = ", ".join("?" for _ in fields)
-    cur = conn.execute(
-        f"INSERT INTO items ({', '.join(fields)}) VALUES ({placeholders})",
-        values,
-    )
-    conn.commit()
-    return int(cur.lastrowid)
+    with _LOCK:
+        cur = conn.execute(
+            f"INSERT INTO items ({', '.join(fields)}) VALUES ({placeholders})",
+            values,
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
 
 def get_item(conn: sqlite3.Connection, item_id: int) -> Optional[sqlite3.Row]:
-    return conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    with _LOCK:
+        return conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
 
 
 def delete_item(conn: sqlite3.Connection, item_id: int) -> bool:
-    cur = conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
-    conn.commit()
-    return cur.rowcount > 0
+    with _LOCK:
+        cur = conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def list_items(
@@ -155,7 +172,8 @@ def list_items(
         params.append(platform)
     query += " ORDER BY added_at DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
-    return conn.execute(query, params).fetchall()
+    with _LOCK:
+        return conn.execute(query, params).fetchall()
 
 
 def search_items(
@@ -165,31 +183,33 @@ def search_items(
         return list_items(conn, limit=limit)
 
     if fts_enabled():
-        try:
-            rows = conn.execute(
-                """
-                SELECT items.* FROM items
-                JOIN items_fts ON items.id = items_fts.rowid
-                WHERE items_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (_fts_query(query), limit),
-            ).fetchall()
-            return rows
-        except sqlite3.OperationalError:
-            pass  # cae al LIKE si la sintaxis MATCH falla (p.ej. caracteres raros)
+        with _LOCK:
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT items.* FROM items
+                    JOIN items_fts ON items.id = items_fts.rowid
+                    WHERE items_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                    """,
+                    (_fts_query(query), limit),
+                ).fetchall()
+                return rows
+            except sqlite3.OperationalError:
+                pass  # cae al LIKE si la sintaxis MATCH falla (p.ej. caracteres raros)
 
     like = f"%{query}%"
-    return conn.execute(
-        """
-        SELECT * FROM items
-        WHERE title LIKE ? OR uploader LIKE ? OR tags LIKE ? OR description LIKE ?
-        ORDER BY added_at DESC
-        LIMIT ?
-        """,
-        (like, like, like, like, limit),
-    ).fetchall()
+    with _LOCK:
+        return conn.execute(
+            """
+            SELECT * FROM items
+            WHERE title LIKE ? OR uploader LIKE ? OR tags LIKE ? OR description LIKE ?
+            ORDER BY added_at DESC
+            LIMIT ?
+            """,
+            (like, like, like, like, limit),
+        ).fetchall()
 
 
 def _fts_query(query: str) -> str:
@@ -199,15 +219,17 @@ def _fts_query(query: str) -> str:
 
 
 def count_items(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT COUNT(*) AS c FROM items").fetchone()
-    return int(row["c"])
+    with _LOCK:
+        row = conn.execute("SELECT COUNT(*) AS c FROM items").fetchone()
+        return int(row["c"])
 
 
 def distinct_platforms(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute(
-        "SELECT DISTINCT extractor FROM items ORDER BY extractor"
-    ).fetchall()
-    return [r["extractor"] for r in rows]
+    with _LOCK:
+        rows = conn.execute(
+            "SELECT DISTINCT extractor FROM items ORDER BY extractor"
+        ).fetchall()
+        return [r["extractor"] for r in rows]
 
 
 # ---------------------------------------------------------------- jobs
@@ -220,15 +242,16 @@ def create_job(
     quality: str,
 ) -> None:
     now = _now_iso()
-    conn.execute(
-        """
-        INSERT INTO jobs (id, url, audio_only, quality, state, progress, message,
-                           item_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'en_cola', 0, 'En cola…', NULL, ?, ?)
-        """,
-        (job_id, url, int(audio_only), quality, now, now),
-    )
-    conn.commit()
+    with _LOCK:
+        conn.execute(
+            """
+            INSERT INTO jobs (id, url, audio_only, quality, state, progress, message,
+                               item_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'en_cola', 0, 'En cola…', NULL, ?, ?)
+            """,
+            (job_id, url, int(audio_only), quality, now, now),
+        )
+        conn.commit()
 
 
 def update_job(conn: sqlite3.Connection, job_id: str, **fields: Any) -> None:
@@ -236,39 +259,43 @@ def update_job(conn: sqlite3.Connection, job_id: str, **fields: Any) -> None:
         return
     fields["updated_at"] = _now_iso()
     set_clause = ", ".join(f"{k} = ?" for k in fields)
-    conn.execute(
-        f"UPDATE jobs SET {set_clause} WHERE id = ?",
-        (*fields.values(), job_id),
-    )
-    conn.commit()
+    with _LOCK:
+        conn.execute(
+            f"UPDATE jobs SET {set_clause} WHERE id = ?",
+            (*fields.values(), job_id),
+        )
+        conn.commit()
 
 
 def get_job(conn: sqlite3.Connection, job_id: str) -> Optional[sqlite3.Row]:
-    return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    with _LOCK:
+        return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
 
 
 def list_jobs(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
-    return conn.execute(
-        "SELECT * FROM jobs ORDER BY updated_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+    with _LOCK:
+        return conn.execute(
+            "SELECT * FROM jobs ORDER BY updated_at DESC LIMIT ?", (limit,)
+        ).fetchall()
 
 
 def mark_stale_jobs_interrupted(conn: sqlite3.Connection) -> int:
     """Al arrancar el servidor, cualquier job que haya quedado en un estado
     'en curso' es, por definición, de un proceso anterior que murió (un
     proceso recién iniciado no puede tener descargas activas todavía)."""
-    cur = conn.execute(
-        """
-        UPDATE jobs SET
-            state = 'interrumpido',
-            message = 'El servidor se reinició mientras esta descarga estaba en curso.',
-            updated_at = ?
-        WHERE state IN ('en_cola', 'descargando', 'procesando')
-        """,
-        (_now_iso(),),
-    )
-    conn.commit()
-    return cur.rowcount
+    with _LOCK:
+        cur = conn.execute(
+            """
+            UPDATE jobs SET
+                state = 'interrumpido',
+                message = 'El servidor se reinició mientras esta descarga estaba en curso.',
+                updated_at = ?
+            WHERE state IN ('en_cola', 'descargando', 'procesando')
+            """,
+            (_now_iso(),),
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 def _now_iso() -> str:

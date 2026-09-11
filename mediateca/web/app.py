@@ -71,12 +71,19 @@ def create_app() -> FastAPI:
     app.state.config = config
     app.state.executor = ThreadPoolExecutor(max_workers=max(1, config.concurrent_downloads))
 
+    # Una única conexión SQLite para todo el proceso, compartida entre las
+    # peticiones HTTP y los hilos worker de descarga (ver get_conn() más
+    # abajo). Antes se abría una conexión nueva en cada llamada a get_conn()
+    # y nunca se cerraba: con el polling de /api/jobs/<id> eso agotaba los
+    # descriptores de archivo disponibles y terminaba en
+    # "sqlite3.OperationalError: unable to open database file". db.py
+    # serializa el acceso concurrente a esta conexión con su propio lock.
+    app.state.db_conn = library.open_library(config)
+
     # Cualquier job que haya quedado "en curso" es de un proceso anterior que
     # murió (este proceso recién arranca): lo marcamos como interrumpido en
     # vez de dejarlo mintiendo para siempre sobre su propio progreso.
-    startup_conn = library.open_library(config)
-    library.db.mark_stale_jobs_interrupted(startup_conn)
-    startup_conn.close()
+    library.db.mark_stale_jobs_interrupted(app.state.db_conn)
 
     templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     templates.env.filters["duration"] = fmt_duration
@@ -86,7 +93,13 @@ def create_app() -> FastAPI:
     app.mount("/media", StaticFiles(directory=str(config.library_path)), name="media")
 
     def get_conn():
-        return library.open_library(app.state.config)
+        # Ya no abre una conexión nueva: devuelve la única conexión del
+        # proceso, creada arriba al levantar la app.
+        return app.state.db_conn
+
+    @app.on_event("shutdown")
+    def _close_db_conn() -> None:
+        app.state.db_conn.close()
 
     def _worker(job_id: str, url: str, audio_only: bool, quality: str) -> None:
         conn = get_conn()
