@@ -144,7 +144,11 @@ def insert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
             values,
         )
         conn.commit()
-        return int(cur.lastrowid)
+        # lastrowid es Optional según los stubs de sqlite3 (puede ser None
+        # tras un INSERT que no genera fila, p.ej. en una vista), pero tras
+        # un INSERT normal en una tabla con rowid como esta, siempre hay uno.
+        assert cur.lastrowid is not None
+        return cur.lastrowid
 
 
 def get_item(conn: sqlite3.Connection, item_id: int) -> Optional[sqlite3.Row]:
@@ -177,10 +181,10 @@ def list_items(
 
 
 def search_items(
-    conn: sqlite3.Connection, query: str, limit: int = 60
+    conn: sqlite3.Connection, query: str, limit: int = 60, offset: int = 0
 ) -> list[sqlite3.Row]:
     if not query.strip():
-        return list_items(conn, limit=limit)
+        return list_items(conn, limit=limit, offset=offset)
 
     if fts_enabled():
         with _LOCK:
@@ -191,9 +195,9 @@ def search_items(
                     JOIN items_fts ON items.id = items_fts.rowid
                     WHERE items_fts MATCH ?
                     ORDER BY rank
-                    LIMIT ?
+                    LIMIT ? OFFSET ?
                     """,
-                    (_fts_query(query), limit),
+                    (_fts_query(query), limit, offset),
                 ).fetchall()
                 return rows
             except sqlite3.OperationalError:
@@ -206,9 +210,9 @@ def search_items(
             SELECT * FROM items
             WHERE title LIKE ? OR uploader LIKE ? OR tags LIKE ? OR description LIKE ?
             ORDER BY added_at DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (like, like, like, like, limit),
+            (like, like, like, like, limit, offset),
         ).fetchall()
 
 
@@ -299,4 +303,9 @@ def mark_stale_jobs_interrupted(conn: sqlite3.Connection) -> int:
 
 
 def _now_iso() -> str:
-    return dt.datetime.now().isoformat(timespec="seconds")
+    # Microsegundos, no solo segundos: la lista de jobs se ordena por este
+    # campo para mostrar "los tocados más recientemente" primero, y con
+    # resolución de segundo dos actualizaciones seguidas del mismo job (algo
+    # normal durante una descarga activa) podían quedar empatadas y
+    # ordenarse de forma indefinida.
+    return dt.datetime.now().isoformat(timespec="microseconds")

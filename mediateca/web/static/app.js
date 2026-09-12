@@ -46,21 +46,53 @@ const mediateca = (() => {
     const emptyMsg = document.getElementById("empty-msg");
     const searchInput = document.getElementById("search-input");
     const platformFilter = document.getElementById("platform-filter");
+    const loadMoreBtn = document.getElementById("load-more-btn");
+    const PAGE_SIZE = 60;
+    // El primer bloque de tarjetas viene ya renderizado por el servidor
+    // (para no duplicar esa carga con un fetch extra al abrir la página);
+    // el botón "Cargar más" trae su punto de partida en data-offset.
+    let offset = loadMoreBtn ? parseInt(loadMoreBtn.dataset.offset, 10) || 0 : 0;
 
-    async function refresh() {
+    function buildParams(offsetValue) {
       const params = new URLSearchParams();
       if (searchInput.value.trim()) params.set("q", searchInput.value.trim());
       if (platformFilter.value) params.set("platform", platformFilter.value);
+      params.set("limit", PAGE_SIZE);
+      params.set("offset", offsetValue);
+      return params;
+    }
 
-      const res = await fetch(`/api/library?${params.toString()}`);
+    function setLoadMoreVisible(visible) {
+      if (loadMoreBtn) loadMoreBtn.style.display = visible ? "inline-block" : "none";
+    }
+
+    async function refresh() {
+      const res = await fetch(`/api/library?${buildParams(0).toString()}`);
       const items = await res.json();
 
       grid.innerHTML = items.map(cardHtml).join("");
       emptyMsg.style.display = items.length ? "none" : "block";
+      offset = items.length;
+      // Si volvió una página llena, puede que haya más detrás.
+      setLoadMoreVisible(items.length === PAGE_SIZE);
+    }
+
+    async function loadMore() {
+      loadMoreBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/library?${buildParams(offset).toString()}`);
+        const items = await res.json();
+        grid.insertAdjacentHTML("beforeend", items.map(cardHtml).join(""));
+        offset += items.length;
+        setLoadMoreVisible(items.length === PAGE_SIZE);
+      } finally {
+        loadMoreBtn.disabled = false;
+      }
     }
 
     searchInput.addEventListener("input", debounce(refresh, 300));
     platformFilter.addEventListener("change", refresh);
+    if (loadMoreBtn) loadMoreBtn.addEventListener("click", loadMore);
   }
 
   function jobStateLabel(state) {
@@ -128,27 +160,35 @@ const mediateca = (() => {
 
     function stopPolling(jobId) {
       if (pollers[jobId]) {
-        clearInterval(pollers[jobId]);
+        pollers[jobId].close();
         delete pollers[jobId];
       }
     }
 
     function pollJob(jobId) {
+      // Antes: setInterval haciendo fetch a /api/jobs/<id> cada segundo,
+      // por cada job activo, por cada pestaña abierta. Ahora: una única
+      // conexión persistente (Server-Sent Events) por job; el servidor
+      // solo manda un evento cuando algo cambió de verdad.
       stopPolling(jobId);
-      pollers[jobId] = setInterval(async () => {
+      const source = new EventSource(`/api/jobs/${jobId}/stream`);
+      pollers[jobId] = source;
+
+      source.addEventListener("message", (ev) => {
         try {
-          const res = await fetch(`/api/jobs/${jobId}`);
-          if (!res.ok) {
-            stopPolling(jobId);
-            return;
-          }
-          const job = await res.json();
+          const job = JSON.parse(ev.data);
           upsertJobRow(job);
           if (!ACTIVE_JOB_STATES.includes(job.state)) stopPolling(jobId);
         } catch (err) {
           stopPolling(jobId);
         }
-      }, 1000);
+      });
+      source.addEventListener("not_found", () => stopPolling(jobId));
+      // EventSource reintenta solo por defecto; como el servidor siempre
+      // cierra el stream cuando el job llega a un estado final o no existe
+      // (arriba ya lo cerramos a mano en esos casos), un error aquí es un
+      // corte de verdad: no tiene sentido seguir reintentando solos.
+      source.onerror = () => stopPolling(jobId);
     }
 
     // Al abrir esta pestaña (o volver a ella, o reabrir el navegador),

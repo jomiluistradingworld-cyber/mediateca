@@ -36,12 +36,17 @@ def add_from_url(
     return db.insert_item(conn, item)
 
 
-def list_library(conn: sqlite3.Connection, platform: Optional[str] = None, limit: int = 60):
-    return db.list_items(conn, platform=platform, limit=limit)
+def list_library(
+    conn: sqlite3.Connection,
+    platform: Optional[str] = None,
+    limit: int = 60,
+    offset: int = 0,
+):
+    return db.list_items(conn, platform=platform, limit=limit, offset=offset)
 
 
-def search_library(conn: sqlite3.Connection, query: str, limit: int = 60):
-    return db.search_items(conn, query, limit=limit)
+def search_library(conn: sqlite3.Connection, query: str, limit: int = 60, offset: int = 0):
+    return db.search_items(conn, query, limit=limit, offset=offset)
 
 
 def get_item(conn: sqlite3.Connection, item_id: int):

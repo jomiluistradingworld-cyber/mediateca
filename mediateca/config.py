@@ -21,6 +21,12 @@ DEFAULTS: dict = {
     "default_audio_format": "mp3",
     "download_thumbnails": True,
     "concurrent_downloads": 2,
+    # Mitigación de bloqueos por sitio: 0 desactiva cada una de estas.
+    # sleep_interval/max_sleep_interval: pausa (fija, o aleatoria en ese
+    # rango) entre descargas. rate_limit_kbps: techo de velocidad de bajada.
+    "sleep_interval": 0,
+    "max_sleep_interval": 0,
+    "rate_limit_kbps": 0,
     "host": "127.0.0.1",
     "port": 8420,
 }
@@ -34,6 +40,9 @@ class Config:
     default_audio_format: str
     download_thumbnails: bool
     concurrent_downloads: int
+    sleep_interval: float
+    max_sleep_interval: float
+    rate_limit_kbps: int
     host: str
     port: int
 
@@ -90,6 +99,9 @@ def load_config() -> Config:
         default_audio_format=str(merged["default_audio_format"]),
         download_thumbnails=bool(merged["download_thumbnails"]),
         concurrent_downloads=int(merged["concurrent_downloads"]),
+        sleep_interval=float(merged["sleep_interval"]),
+        max_sleep_interval=float(merged["max_sleep_interval"]),
+        rate_limit_kbps=int(merged["rate_limit_kbps"]),
         host=str(merged["host"]),
         port=int(merged["port"]),
     )

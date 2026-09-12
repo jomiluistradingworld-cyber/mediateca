@@ -22,6 +22,15 @@
   {% endfor %}
 </div>
 <p id="empty-msg" class="muted empty-msg" style="display: {{ 'none' if items else 'block' }};">No se encontró nada con esos filtros.</p>
+<div class="load-more-wrap">
+  <button
+    id="load-more-btn"
+    type="button"
+    class="btn-secondary"
+    data-offset="{{ items|length }}"
+    style="display: {{ 'inline-block' if total > items|length else 'none' }};"
+  >Cargar más</button>
+</div>
 {% endblock %}
 
 {% block scripts %}

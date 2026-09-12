@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -20,7 +22,8 @@ from .. import library
 from ..config import Config, ensure_dirs, load_config, save_config
 from ..downloader import DownloadError, DownloadPaused
 from ..formatting import fmt_duration, fmt_size
-from ..models import DownloadRequest
+from ..logging_setup import configure_logging
+from ..models import DownloadRequest, JobStatus
 
 BASE_DIR = Path(__file__).parent
 
@@ -67,8 +70,17 @@ def create_app() -> FastAPI:
     config = load_config()
     ensure_dirs(config)
 
-    app = FastAPI(title="mediateca")
+    logger = configure_logging(config.db_path.parent)
+    logger.info("Arrancando mediateca (host=%s puerto=%s)", config.host, config.port)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        app.state.db_conn.close()
+
+    app = FastAPI(title="mediateca", lifespan=lifespan)
     app.state.config = config
+    app.state.logger = logger
     app.state.executor = ThreadPoolExecutor(max_workers=max(1, config.concurrent_downloads))
 
     # Una única conexión SQLite para todo el proceso, compartida entre las
@@ -90,16 +102,22 @@ def create_app() -> FastAPI:
     templates.env.filters["filesize"] = fmt_size
     templates.env.filters["urlpath"] = lambda p: quote(str(p), safe="/") if p else ""
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-    app.mount("/media", StaticFiles(directory=str(config.library_path)), name="media")
+
+    async def _serve_media(scope, receive, send):
+        # Antes este mount se creaba UNA vez con app.mount(..., StaticFiles(directory=...)),
+        # fijando para siempre la carpeta que hubiera en config.library_path al arrancar.
+        # Si luego cambiabas la carpeta de biblioteca desde Ajustes, /media seguía
+        # sirviendo desde la ruta vieja hasta reiniciar el proceso a mano. Al construir
+        # el handler de nuevo en cada petición, siempre refleja app.state.config actual.
+        handler = StaticFiles(directory=str(app.state.config.library_path), check_dir=False)
+        await handler(scope, receive, send)
+
+    app.mount("/media", _serve_media, name="media")
 
     def get_conn():
         # Ya no abre una conexión nueva: devuelve la única conexión del
         # proceso, creada arriba al levantar la app.
         return app.state.db_conn
-
-    @app.on_event("shutdown")
-    def _close_db_conn() -> None:
-        app.state.db_conn.close()
 
     def _worker(job_id: str, url: str, audio_only: bool, quality: str) -> None:
         conn = get_conn()
@@ -146,8 +164,10 @@ def create_app() -> FastAPI:
                 message="Pausada. Al reanudar continúa desde donde se quedó.",
             )
         except DownloadError as e:
+            logger.warning("Job %s terminó en error: %s", job_id, e)
             library.db.update_job(conn, job_id, state="error", message=str(e))
         except Exception as e:  # salvaguarda: nunca dejar el job colgado
+            logger.exception("Job %s: error inesperado", job_id)
             library.db.update_job(conn, job_id, state="error", message=f"Error inesperado: {e}")
         finally:
             with CANCEL_EVENTS_LOCK:
@@ -199,23 +219,45 @@ def create_app() -> FastAPI:
             default_quality=str(form.get("default_quality", cfg.default_quality)),
             default_audio_format=str(form.get("default_audio_format", cfg.default_audio_format)),
             download_thumbnails="download_thumbnails" in form,
-            concurrent_downloads=int(form.get("concurrent_downloads", cfg.concurrent_downloads)),
+            concurrent_downloads=max(1, int(form.get("concurrent_downloads", cfg.concurrent_downloads))),
+            sleep_interval=max(0.0, float(form.get("sleep_interval", cfg.sleep_interval) or 0)),
+            max_sleep_interval=max(0.0, float(form.get("max_sleep_interval", cfg.max_sleep_interval) or 0)),
+            rate_limit_kbps=max(0, int(form.get("rate_limit_kbps", cfg.rate_limit_kbps) or 0)),
             host=cfg.host,
             port=cfg.port,
         )
         save_config(new_cfg)
         app.state.config = new_cfg
+
+        # El ThreadPoolExecutor no se puede redimensionar en caliente: si
+        # cambió el número de descargas simultáneas, hay que crear uno nuevo.
+        # shutdown(wait=False) no cancela los jobs que ya estén corriendo en
+        # el executor viejo, solo deja de aceptar trabajos nuevos en él.
+        if new_cfg.concurrent_downloads != cfg.concurrent_downloads:
+            old_executor = app.state.executor
+            app.state.executor = ThreadPoolExecutor(max_workers=new_cfg.concurrent_downloads)
+            old_executor.shutdown(wait=False)
+            logger.info(
+                "concurrent_downloads cambiado de %s a %s: executor reconstruido",
+                cfg.concurrent_downloads, new_cfg.concurrent_downloads,
+            )
+
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
     # ---------------------------------------------------------------- API
 
     @app.get("/api/library")
-    def api_library(q: Optional[str] = None, platform: Optional[str] = None, limit: int = 60):
+    def api_library(
+        q: Optional[str] = None,
+        platform: Optional[str] = None,
+        limit: int = Query(60, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+    ):
         conn = get_conn()
         if q:
-            rows = library.search_library(conn, q, limit=limit)
+            rows = library.search_library(conn, q, limit=limit, offset=offset)
         else:
-            rows = library.list_library(conn, platform=platform, limit=limit)
+            rows = library.list_library(conn, platform=platform, limit=limit, offset=offset)
         return [_row_to_dict(r) for r in rows]
 
     @app.delete("/api/items/{item_id}")
@@ -235,19 +277,51 @@ def create_app() -> FastAPI:
         app.state.executor.submit(_worker, job_id, req.url, req.audio_only, quality)
         return {"job_id": job_id}
 
-    @app.get("/api/jobs")
-    def api_jobs_list(limit: int = 20):
+    @app.get("/api/jobs", response_model=list[JobStatus])
+    def api_jobs_list(limit: int = Query(20, ge=1, le=200)):
         conn = get_conn()
         rows = library.db.list_jobs(conn, limit=limit)
         return [_job_to_dict(r) for r in rows]
 
-    @app.get("/api/jobs/{job_id}")
+    @app.get("/api/jobs/{job_id}", response_model=JobStatus)
     def api_job(job_id: str):
         conn = get_conn()
         row = library.db.get_job(conn, job_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Job no encontrado")
         return _job_to_dict(row)
+
+    @app.get("/api/jobs/{job_id}/stream")
+    async def api_job_stream(job_id: str, request: Request):
+        """Server-Sent Events con el progreso de un job.
+
+        Sustituye al polling por setInterval del frontend (1 petición HTTP
+        por segundo, por cada job activo, por cada pestaña abierta) por una
+        única conexión persistente. El servidor solo manda un evento nuevo
+        cuando algo cambió, y cierra solo cuando el job llega a un estado
+        final o el cliente se desconecta.
+        """
+
+        async def event_generator():
+            last_payload = None
+            while True:
+                if await request.is_disconnected():
+                    return
+                conn = get_conn()
+                row = library.db.get_job(conn, job_id)
+                if row is None:
+                    yield "event: not_found\ndata: {}\n\n"
+                    return
+                job = _job_to_dict(row)
+                payload = json.dumps(job)
+                if payload != last_payload:
+                    yield f"data: {payload}\n\n"
+                    last_payload = payload
+                if job["state"] not in ACTIVE_STATES:
+                    return
+                await asyncio.sleep(0.7)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     @app.post("/api/jobs/{job_id}/pause")
     def api_pause_job(job_id: str):

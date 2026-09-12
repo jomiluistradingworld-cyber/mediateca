@@ -49,37 +49,40 @@ def download(
     ensure_dirs(config)
     conn = library.open_library(config)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task_id = progress.add_task("Iniciando…", total=100)
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("Iniciando…", total=100)
 
-        def on_progress(pct: Optional[float], message: str) -> None:
-            if pct is not None:
-                progress.update(task_id, completed=pct, description=message or "Descargando…")
-            else:
-                progress.update(task_id, description=message or "Descargando…")
+            def on_progress(pct: Optional[float], message: str) -> None:
+                if pct is not None:
+                    progress.update(task_id, completed=pct, description=message or "Descargando…")
+                else:
+                    progress.update(task_id, description=message or "Descargando…")
 
-        try:
-            item_id = library.add_from_url(
-                conn, config, url, audio_only=audio_only, quality=quality, on_progress=on_progress
-            )
-        except DownloadError as e:
-            progress.stop()
-            console.print(f"[bold red]Error:[/bold red] {esc(str(e))}")
-            raise typer.Exit(code=1)
+            try:
+                item_id = library.add_from_url(
+                    conn, config, url, audio_only=audio_only, quality=quality, on_progress=on_progress
+                )
+            except DownloadError as e:
+                progress.stop()
+                console.print(f"[bold red]Error:[/bold red] {esc(str(e))}")
+                raise typer.Exit(code=1) from None
 
-    item = library.get_item(conn, item_id)
-    console.print(
-        f"[bold green]✓ Añadido a la biblioteca[/bold green] "
-        f"(id {item_id}): {esc(item['title'])}"
-    )
-    console.print(f"  [dim]{esc(str(config.library_path / item['file_path']))}[/dim]")
+        item = library.get_item(conn, item_id)
+        console.print(
+            f"[bold green]✓ Añadido a la biblioteca[/bold green] "
+            f"(id {item_id}): {esc(item['title'])}"
+        )
+        console.print(f"  [dim]{esc(str(config.library_path / item['file_path']))}[/dim]")
+    finally:
+        conn.close()
 
 
 @app.command(name="list")
@@ -90,8 +93,11 @@ def list_cmd(
     """Lista los últimos elementos de la biblioteca."""
     config = load_config()
     conn = library.open_library(config)
-    rows = library.list_library(conn, platform=platform, limit=limit)
-    _print_table(rows)
+    try:
+        rows = library.list_library(conn, platform=platform, limit=limit)
+        _print_table(rows)
+    finally:
+        conn.close()
 
 
 @app.command()
@@ -99,8 +105,11 @@ def search(query: str = typer.Argument(..., help="Texto a buscar en título, aut
     """Busca en la biblioteca local."""
     config = load_config()
     conn = library.open_library(config)
-    rows = library.search_library(conn, query)
-    _print_table(rows)
+    try:
+        rows = library.search_library(conn, query)
+        _print_table(rows)
+    finally:
+        conn.close()
 
 
 @app.command()
@@ -108,20 +117,23 @@ def info(item_id: int = typer.Argument(..., help="ID del elemento (ver 'mediatec
     """Muestra el detalle completo de un elemento."""
     config = load_config()
     conn = library.open_library(config)
-    row = library.get_item(conn, item_id)
-    if row is None:
-        console.print(f"[bold red]No existe el elemento con id {item_id}[/bold red]")
-        raise typer.Exit(code=1)
+    try:
+        row = library.get_item(conn, item_id)
+        if row is None:
+            console.print(f"[bold red]No existe el elemento con id {item_id}[/bold red]")
+            raise typer.Exit(code=1)
 
-    console.print(f"[bold]{esc(row['title'])}[/bold]  (id {row['id']})")
-    console.print(f"  Plataforma:  {esc(row['extractor'])}")
-    console.print(f"  Autor:       {esc(row['uploader'] or '—')}")
-    console.print(f"  Duración:    {_fmt_duration(row['duration'])}")
-    console.print(f"  Tamaño:      {_fmt_size(row['filesize'])}")
-    console.print(f"  Tipo:        {esc(row['media_type'])}")
-    console.print(f"  Añadido:     {row['added_at']}")
-    console.print(f"  Origen:      {esc(row['source_url'])}")
-    console.print(f"  Archivo:     {esc(str(config.library_path / row['file_path']))}")
+        console.print(f"[bold]{esc(row['title'])}[/bold]  (id {row['id']})")
+        console.print(f"  Plataforma:  {esc(row['extractor'])}")
+        console.print(f"  Autor:       {esc(row['uploader'] or '—')}")
+        console.print(f"  Duración:    {_fmt_duration(row['duration'])}")
+        console.print(f"  Tamaño:      {_fmt_size(row['filesize'])}")
+        console.print(f"  Tipo:        {esc(row['media_type'])}")
+        console.print(f"  Añadido:     {row['added_at']}")
+        console.print(f"  Origen:      {esc(row['source_url'])}")
+        console.print(f"  Archivo:     {esc(str(config.library_path / row['file_path']))}")
+    finally:
+        conn.close()
 
 
 @app.command()
@@ -132,12 +144,15 @@ def remove(
     """Elimina un elemento de la biblioteca (y opcionalmente su archivo)."""
     config = load_config()
     conn = library.open_library(config)
-    ok = library.remove_item(conn, item_id, delete_file=delete_file, config=config)
-    if ok:
-        console.print(f"[bold green]✓ Eliminado[/bold green] (id {item_id})")
-    else:
-        console.print(f"[bold red]No existe el elemento con id {item_id}[/bold red]")
-        raise typer.Exit(code=1)
+    try:
+        ok = library.remove_item(conn, item_id, delete_file=delete_file, config=config)
+        if ok:
+            console.print(f"[bold green]✓ Eliminado[/bold green] (id {item_id})")
+        else:
+            console.print(f"[bold red]No existe el elemento con id {item_id}[/bold red]")
+            raise typer.Exit(code=1)
+    finally:
+        conn.close()
 
 
 @app.command()

@@ -20,6 +20,15 @@ download_thumbnails = true
 # Cuántas descargas simultáneas permite el servidor web
 concurrent_downloads = 2
 
+# Mitigación de bloqueos por sitio (YouTube y otros limitan a quien pide
+# demasiado, muy seguido). Con 0 quedan desactivadas.
+# Espera mínima en segundos entre descargas.
+sleep_interval = 0
+# Si es mayor que sleep_interval, espera un valor aleatorio en ese rango.
+max_sleep_interval = 0
+# Techo de velocidad de descarga en KB/s (0 = sin límite).
+rate_limit_kbps = 0
+
 # Host y puerto por defecto del servidor web local
 host = "127.0.0.1"
 port = 8420

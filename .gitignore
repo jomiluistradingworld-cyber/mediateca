@@ -9,3 +9,6 @@ dist/
 *.sqlite3
 *.sqlite3-journal
 mediateca.zip
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

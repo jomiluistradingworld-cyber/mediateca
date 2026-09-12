@@ -93,6 +93,16 @@ def build_ydl_opts(
             {"key": "FFmpegThumbnailsConvertor", "format": "jpg"}
         )
 
+    # Mitigación de bloqueos por sitio (YouTube y otros cortan/limitan a
+    # quien pide demasiado, muy seguido). Con los valores por defecto (0)
+    # esto no cambia nada; se activan desde Ajustes.
+    if config.sleep_interval > 0:
+        opts["sleep_interval"] = config.sleep_interval
+        if config.max_sleep_interval > config.sleep_interval:
+            opts["max_sleep_interval"] = config.max_sleep_interval
+    if config.rate_limit_kbps > 0:
+        opts["ratelimit"] = config.rate_limit_kbps * 1024  # yt-dlp usa bytes/s
+
     return opts
 
 
@@ -101,6 +111,32 @@ def _final_filepath(info: dict) -> Optional[str]:
     if downloads and downloads[0].get("filepath"):
         return downloads[0]["filepath"]
     return info.get("filepath") or info.get("_filename")
+
+
+def _clarify_error(msg: str) -> str:
+    """Traduce el mensaje final de yt-dlp a algo más honesto cuando el
+    motivo es un bloqueo del sitio, en vez de un simple corte de red.
+
+    Ojo: esto solo se aplica al error FINAL, después de que yt-dlp agotó
+    sus reintentos automáticos (`retries`/`fragment_retries`). Durante los
+    reintentos individuales no hay forma fiable de distinguir "va a
+    reintentar y funcionará" de "está bloqueado y va a seguir fallando",
+    así que el aviso de progreso de cada intento sigue siendo genérico.
+    """
+    lowered = msg.lower()
+    if "403" in msg or "forbidden" in lowered:
+        return (
+            "El sitio está bloqueando esta descarga (403 Forbidden). "
+            "Prueba de nuevo más tarde, o baja la velocidad/paralelismo "
+            "en Ajustes. Detalle original: " + msg
+        )
+    if "429" in msg or "too many requests" in lowered:
+        return (
+            "El sitio está limitando las peticiones (429 Too Many Requests). "
+            "Espera un rato antes de reintentar, o baja las descargas "
+            "simultáneas en Ajustes. Detalle original: " + msg
+        )
+    return msg
 
 
 def _find_thumbnail(final_path: Path) -> Optional[Path]:
@@ -167,7 +203,7 @@ def download(
     except DownloadCancelled as e:
         raise DownloadPaused(str(e)) from e
     except yt_dlp.utils.DownloadError as e:
-        raise DownloadError(str(e)) from e
+        raise DownloadError(_clarify_error(str(e))) from e
 
     if info is None:
         raise DownloadError("yt-dlp no devolvió información del recurso.")

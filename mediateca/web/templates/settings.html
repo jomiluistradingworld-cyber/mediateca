@@ -44,6 +44,29 @@
     <span>Guardar miniaturas localmente</span>
   </label>
 
+  <fieldset class="settings-fieldset">
+    <legend>Mitigar bloqueos por sitio</legend>
+    <p class="muted small">
+      Sitios como YouTube pueden bloquear o limitar temporalmente a quien
+      pide demasiado, muy seguido. Deja en 0 para desactivar.
+    </p>
+
+    <label class="field">
+      <span>Espera mínima entre descargas (segundos)</span>
+      <input type="number" name="sleep_interval" min="0" step="0.5" value="{{ config.sleep_interval }}">
+    </label>
+
+    <label class="field">
+      <span>Espera máxima (segundos, opcional — elige un valor aleatorio entre ambas)</span>
+      <input type="number" name="max_sleep_interval" min="0" step="0.5" value="{{ config.max_sleep_interval }}">
+    </label>
+
+    <label class="field">
+      <span>Límite de velocidad de descarga (KB/s, 0 = sin límite)</span>
+      <input type="number" name="rate_limit_kbps" min="0" value="{{ config.rate_limit_kbps }}">
+    </label>
+  </fieldset>
+
   <button type="submit" class="btn-primary">Guardar cambios</button>
 </form>
 
