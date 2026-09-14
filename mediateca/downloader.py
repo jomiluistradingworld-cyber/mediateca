@@ -18,6 +18,13 @@ from .config import Config
 
 OUTTMPL = "%(extractor)s/%(uploader,channel,uploader_id|Desconocido)s/%(title).150B [%(id)s].%(ext)s"
 
+# Límite de entradas que se resuelven y renderizan en la vista previa de una
+# playlist. Un "radio mix" de YouTube o una lista con cientos de videos
+# tardaría demasiado en resolverse y volcaría cientos de checkboxes en el
+# navegador; la vista previa sirve para elegir un puñado, no para clonarlo
+# entero.
+MAX_PREVIEW_ENTRIES = 50
+
 ProgressCallback = Callable[[Optional[float], str], None]
 
 
@@ -167,7 +174,11 @@ def probe(url: str, config: Config) -> dict[str, Any]:
 
     if shallow.get("_type") in ("playlist", "multi_video"):
         try:
-            with yt_dlp.YoutubeDL({**base_opts, "extract_flat": "in_playlist"}) as ydl:
+            with yt_dlp.YoutubeDL({
+                **base_opts,
+                "extract_flat": "in_playlist",
+                "playlistend": MAX_PREVIEW_ENTRIES,
+            }) as ydl:
                 full = ydl.extract_info(url, download=False)
         except yt_dlp.utils.DownloadError as e:
             raise DownloadError(_clarify_error(str(e))) from e

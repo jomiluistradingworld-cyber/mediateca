@@ -257,12 +257,15 @@ const mediateca = (() => {
       }
       previewBtn.disabled = true;
       previewEl.style.display = "block";
-      previewEl.innerHTML = `<p class="muted small">Consultando…</p>`;
+      previewEl.innerHTML = `<p class="muted small">Consultando… (las listas largas pueden tardar unos segundos)</p>`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000);
       try {
         const res = await fetch("/api/probe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),
+          signal: controller.signal,
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "No se pudo obtener información de esa URL.");
@@ -270,9 +273,13 @@ const mediateca = (() => {
         else renderPreviewVideo(data, url);
       } catch (err) {
         clearPreview();
-        previewEl.innerHTML = `<p class="job-message" style="color:var(--danger)">${escapeHtml(String(err.message || err))}</p>`;
+        const msg = err && err.name === "AbortError"
+          ? "La consulta tardó demasiado. Prueba de nuevo o usa una URL de video suelto."
+          : String((err && err.message) || err);
+        previewEl.innerHTML = `<p class="job-message" style="color:var(--danger)">${escapeHtml(msg)}</p>`;
         previewEl.style.display = "block";
       } finally {
+        clearTimeout(timeout);
         previewBtn.disabled = false;
       }
     });

@@ -198,3 +198,37 @@ def test_probe_playlist(tmp_path, monkeypatch):
     assert result["entry_count"] == 2
     assert [e["title"] for e in result["entries"]] == ["Video 1", "Video 2"]
     assert result["formats"] == []
+
+
+def test_probe_playlist_caps_entries(tmp_path, monkeypatch):
+    """Una lista enorme (p.ej. un radio-mix de YouTube) debe limitarse en la
+    vista previa: resolver y renderizar 500 entradas tardaría demasiado."""
+    cfg = make_config(tmp_path)
+    url = "https://example.com/playlist?list=enorme"
+
+    class _RecordingYDL(_FakeYDL):
+        all_opts = []
+
+        def __init__(self, opts):
+            super().__init__(opts)
+            type(self).all_opts.append(opts)
+
+    _RecordingYDL._RESPONSES = {
+        url: {
+            "_type": "playlist",
+            "title": "Lista enorme",
+            "entries": [
+                {"url": f"https://example.com/v{i}", "title": f"Video {i}", "duration": 10}
+                for i in range(500)
+            ],
+        }
+    }
+    monkeypatch.setattr(downloader.yt_dlp, "YoutubeDL", _RecordingYDL)
+
+    result = downloader.probe(url, cfg)
+
+    assert result["is_playlist"] is True
+    assert result["entry_count"] == 500  # el fake no recorta; el recorte real lo hace yt-dlp
+    full_opts = _RecordingYDL.all_opts[-1]
+    assert full_opts.get("playlistend") == downloader.MAX_PREVIEW_ENTRIES
+    assert full_opts.get("extract_flat") == "in_playlist"
