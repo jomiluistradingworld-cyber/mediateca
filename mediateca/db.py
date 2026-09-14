@@ -155,6 +155,25 @@ def insert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
         values.append(v)
     placeholders = ", ".join("?" for _ in fields)
     with _LOCK:
+        # Deduplicación: si ya existe un item para este mismo archivo físico
+        # (por su ruta relativa en la biblioteca), una descarga repetida no
+        # crea otra fila: refresca la existente con los metadatos de esta
+        # vez y devuelve su id, para no acumular duplicados.
+        file_path = item.get("file_path")
+        existing = None
+        if file_path:
+            existing = conn.execute(
+                "SELECT id FROM items WHERE file_path = ? ORDER BY id LIMIT 1",
+                (file_path,),
+            ).fetchone()
+        if existing is not None:
+            sets = ", ".join(f"{f} = ?" for f in fields)
+            conn.execute(
+                f"UPDATE items SET {sets} WHERE id = ?",
+                values + [existing["id"]],
+            )
+            conn.commit()
+            return existing["id"]
         cur = conn.execute(
             f"INSERT INTO items ({', '.join(fields)}) VALUES ({placeholders})",
             values,
@@ -170,6 +189,26 @@ def insert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
 def get_item(conn: sqlite3.Connection, item_id: int) -> Optional[sqlite3.Row]:
     with _LOCK:
         return conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+
+
+def find_item_by_path(conn: sqlite3.Connection, file_path: str) -> Optional[int]:
+    """Devuelve el id de un item por su ruta relativa en la biblioteca, o
+    None si todavía no está indexado. Lo usa sync_library() para no importar
+    dos veces el mismo archivo físico."""
+    with _LOCK:
+        row = conn.execute("SELECT id FROM items WHERE file_path = ?", (file_path,)).fetchone()
+        return row["id"] if row else None
+
+
+def find_item_id_by_source_url(conn: sqlite3.Connection, url: str) -> Optional[int]:
+    """Devuelve el id del item que ya se descargó desde esa URL exacta, o
+    None si la URL todavía no está en la biblioteca. Lo usa add_from_url()
+    para no volver a bajar lo que ya está descargado."""
+    with _LOCK:
+        row = conn.execute(
+            "SELECT id FROM items WHERE source_url = ? ORDER BY id LIMIT 1", (url,)
+        ).fetchone()
+        return row["id"] if row else None
 
 
 def delete_item(conn: sqlite3.Connection, item_id: int) -> bool:

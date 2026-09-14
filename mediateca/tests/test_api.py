@@ -227,3 +227,26 @@ def test_settings_save_uploads_and_removes_cookies(app_client, monkeypatch):
     # Este es justo el bug #1 de la auditoría: antes el executor viejo (con
     # el tamaño anterior) seguía siendo el mismo objeto para siempre.
     assert app.state.executor is not old_executor
+
+
+def test_rescan_imports_disk_files_via_api(app_client, tmp_path):
+    client, app = app_client
+
+    # Un archivo físico en la carpeta configurada de la biblioteca.
+    video = app.state.config.library_path / "youtube" / "Canal" / "Prueba [abc123].mp4"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"prueba")
+
+    res = client.post("/api/rescan")
+    assert res.status_code == 200
+    assert res.json()["added"] == 1
+
+    conn = app.state.db_conn
+    row = conn.execute("SELECT * FROM items WHERE file_path = ?", (
+        "youtube/Canal/Prueba [abc123].mp4",
+    )).fetchone()
+    assert row is not None
+    assert row["title"] == "Prueba"
+
+    # La segunda vez no añade nada (idempotente).
+    assert client.post("/api/rescan").json()["added"] == 0

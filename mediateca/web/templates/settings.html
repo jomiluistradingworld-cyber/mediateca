@@ -16,6 +16,16 @@
     <input type="text" name="library_path" value="{{ config.library_path }}">
   </label>
 
+  <p class="muted small">
+    Los archivos que ya están en esa carpeta (p. ej. descargados antes de
+    usar mediateca o copiados a mano) se reindexan automáticamente al
+    arrancar el servidor. Si quieres hacerlo ya, sin reiniciar:
+  </p>
+  <div class="form-row">
+    <button type="button" id="rescan-btn" class="btn-secondary">Reindexar biblioteca ahora</button>
+    <span id="rescan-msg" class="muted small"></span>
+  </div>
+
   <label class="field">
     <span>Calidad por defecto</span>
     <select name="default_quality">
@@ -113,4 +123,8 @@
 </form>
 
 <p class="muted small">Los cambios de puerto y host requieren reiniciar el servidor manualmente.</p>
+{% endblock %}
+
+{% block scripts %}
+<script>mediateca.initSettingsPage();</script>
 {% endblock %}

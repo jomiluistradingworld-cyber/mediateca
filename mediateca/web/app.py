@@ -101,6 +101,21 @@ def create_app() -> FastAPI:
     # vez de dejarlo mintiendo para siempre sobre su propio progreso.
     library.db.mark_stale_jobs_interrupted(app.state.db_conn)
 
+    # Importa en segundo plano los archivos físicos que ya están en la
+    # carpeta de la biblioteca pero no están indexados (descargas hechas
+    # antes de mediateca, copiadas a mano, etc.). En un hilo aparte para no
+    # retrasar el arranque del servidor; db.py serializa el acceso a la
+    # conexión compartida, así que es seguro.
+    def _background_sync() -> None:
+        try:
+            added = library.sync_library(app.state.db_conn, app.state.config)
+            if added:
+                logger.info("Resync de biblioteca: %d archivo(s) añadido(s)", added)
+        except Exception:
+            logger.exception("Resync de biblioteca falló")
+
+    threading.Thread(target=_background_sync, daemon=True).start()
+
     templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     templates.env.filters["duration"] = fmt_duration
     templates.env.filters["filesize"] = fmt_size
@@ -320,6 +335,13 @@ def create_app() -> FastAPI:
             return library.probe_url(app.state.config, req.url)
         except DownloadError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
+
+    @app.post("/api/rescan")
+    def api_rescan():
+        """Reindexa en la BD los archivos físicos de la biblioteca que aún
+        no están indexados. Devuelve cuántos se añadieron."""
+        added = library.sync_library(get_conn(), app.state.config)
+        return {"added": added}
 
     @app.post("/api/download")
     def api_download(req: DownloadRequest):

@@ -20,7 +20,6 @@ def make_item(**overrides) -> dict:
         "upload_date": "20260101",
         "duration": 120,
         "media_type": "video",
-        "file_path": "youtube/Canal de prueba/Un vídeo de prueba [abc123].mp4",
         "thumbnail_path": None,
         "filesize": 1024,
         "ext": "mp4",
@@ -30,6 +29,11 @@ def make_item(**overrides) -> dict:
         "raw_metadata": {"id": "abc123"},
     }
     item.update(overrides)
+    # La ruta del archivo debe ser única por descarga (una por URL): si dos
+    # tests insertan el mismo item con distinta URL, cada uno necesita su
+    # propia ruta física, o el dedup de insert_item() los colapsaría en uno.
+    path_id = str(item["source_url"]).rsplit("/", 1)[-1]
+    item.setdefault("file_path", f"youtube/Canal de prueba/Prueba [{path_id}].mp4")
     return item
 
 

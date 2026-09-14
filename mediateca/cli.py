@@ -85,6 +85,19 @@ def download(
         conn.close()
 
 
+@app.command()
+def rescan():
+    """Indexa en la base de datos los archivos que ya están en la carpeta de la biblioteca pero aún no aparecen."""
+    config = load_config()
+    ensure_dirs(config)
+    conn = library.open_library(config)
+    try:
+        added = library.sync_library(conn, config)
+        console.print(f"[bold green]✓ Biblioteca sincronizada:[/bold green] {added} archivo(s) añadido(s).")
+    finally:
+        conn.close()
+
+
 @app.command(name="list")
 def list_cmd(
     platform: Optional[str] = typer.Option(None, "--platform", "-p", help="Filtrar por plataforma (ej. youtube)."),

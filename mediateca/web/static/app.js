@@ -440,5 +440,30 @@ const mediateca = (() => {
     });
   }
 
-  return { initLibraryPage, initDownloadPage, initItemPage };
+  function initSettingsPage() {
+    const btn = document.getElementById("rescan-btn");
+    const msg = document.getElementById("rescan-msg");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      if (msg) msg.textContent = "Reindexando…";
+      try {
+        const res = await fetch("/api/rescan", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error al reindexar");
+        const resetMsg = "La biblioteca se sincroniza sola al arrancar el servidor; este botón es para hacerlo al momento.";
+        if (msg) {
+          msg.textContent = data.added
+            ? `${data.added} archivo(s) añadido(s). Recarga la Biblioteca para verlos.`
+            : `Todo al día. ${resetMsg}`;
+        }
+      } catch (err) {
+        if (msg) msg.textContent = String((err && err.message) || err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  return { initLibraryPage, initDownloadPage, initItemPage, initSettingsPage };
 })();

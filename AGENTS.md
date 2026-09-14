@@ -23,6 +23,7 @@ Always use Context7 MCP when I need library/API documentation, code generation, 
 | Search | `mediateca search "query"` |
 | Item detail | `mediateca info <id>` |
 | Remove item | `mediateca remove <id> [--delete-file]` |
+| Reindexar disco | `mediateca rescan` (importa a la BD archivos físicos no indexados) |
 | Web UI | `mediateca serve [--host 0.0.0.0] [--port 8420] [--reload]` |
 | Lint | `ruff check .` |
 | Type check | `mypy mediateca` |
@@ -61,6 +62,8 @@ mediateca/
 - **Config paths**: Always `.expanduser()`; defaults created on first run
 - **Cookies**: Stored separately at `~/.config/mediateca/cookies.txt` (chmod 600)
 - **Media serving**: `/media` mount rebuilt per-request to reflect live `library_path` changes
+- **Reindexar disco**: `library.sync_library()` escanea `library_path` e importa archivos no indexados (una pasada idempotente). Se lanza en hilo al arrancar el servidor, vía CLI `rescan` y desde Ajustes (`/api/rescan`).
+- **Dedup**: `db.insert_item()` refresca el item existente (por `file_path`) en vez de crear una fila duplicada; `library.add_from_url()` salta la descarga si la `source_url` ya está en la BD.
 - **Thread pool**: `ThreadPoolExecutor` sized by `config.concurrent_downloads`; recreated on config change
 
 ---
