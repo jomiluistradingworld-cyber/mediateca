@@ -25,9 +25,43 @@
       <span>Solo audio</span>
     </label>
 
+    <button type="button" id="preview-btn" class="btn-secondary">Vista previa</button>
     <button type="submit" class="btn-primary">Descargar</button>
   </div>
+
+  <div id="audio-options" class="form-row" style="display:none;">
+    <label class="field">
+      <span>Formato de audio</span>
+      <select id="audio-format">
+        <option value="">(usar el de Ajustes)</option>
+        <option value="mp3">MP3</option>
+        <option value="m4a">M4A</option>
+        <option value="opus">Opus</option>
+        <option value="flac">FLAC</option>
+        <option value="wav">WAV</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Calidad de audio</span>
+      <select id="audio-bitrate">
+        <option value="">(usar la de Ajustes)</option>
+        <option value="128">128 kbps</option>
+        <option value="192">192 kbps</option>
+        <option value="256">256 kbps</option>
+        <option value="320">320 kbps</option>
+      </select>
+    </label>
+  </div>
+
+  <p class="muted small">
+    "Vista previa" solo funciona con una URL a la vez: te deja ver el título,
+    elegir el formato exacto, o marcar qué videos bajar si es una lista de
+    reproducción. Con varias URLs pegadas, se ignora y se usa la calidad
+    genérica de arriba para todas.
+  </p>
 </form>
+
+<div id="preview" class="preview-panel" style="display:none;"></div>
 
 <div id="jobs" class="jobs"></div>
 <p id="jobs-empty" class="muted small" style="display:none;">Sin descargas recientes.</p>

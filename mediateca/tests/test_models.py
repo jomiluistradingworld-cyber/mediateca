@@ -31,3 +31,24 @@ def test_download_request_defaults():
     req = DownloadRequest(url="https://example.com/v")
     assert req.audio_only is False
     assert req.quality == "best"
+    assert req.format_id is None
+    assert req.audio_format is None
+    assert req.audio_bitrate is None
+
+
+def test_download_request_accepts_format_overrides():
+    req = DownloadRequest(
+        url="https://example.com/v", audio_only=True, format_id="137+140",
+        audio_format="flac", audio_bitrate="320",
+    )
+    assert req.format_id == "137+140"
+    assert req.audio_format == "flac"
+    assert req.audio_bitrate == "320"
+
+
+def test_probe_request_same_url_validation():
+    from mediateca.models import ProbeRequest
+
+    assert ProbeRequest(url="https://example.com/v").url == "https://example.com/v"
+    with pytest.raises(ValidationError):
+        ProbeRequest(url="javascript:alert(1)")

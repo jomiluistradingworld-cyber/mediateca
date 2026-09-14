@@ -110,6 +110,7 @@ def init_db(conn: sqlite3.Connection) -> bool:
     global _fts_enabled_cache
     with _LOCK:
         conn.executescript(SCHEMA)
+        _migrate_jobs_table(conn)
         try:
             conn.executescript(FTS_SCHEMA)
             _fts_enabled_cache = True
@@ -117,6 +118,21 @@ def init_db(conn: sqlite3.Connection) -> bool:
             _fts_enabled_cache = False
         conn.commit()
         return bool(_fts_enabled_cache)
+
+
+def _migrate_jobs_table(conn: sqlite3.Connection) -> None:
+    """Añade columnas nuevas a `jobs` si faltan.
+
+    `CREATE TABLE IF NOT EXISTS` no altera una tabla que ya existe, así que
+    en una base de datos creada con una versión anterior de mediateca estas
+    columnas simplemente no estarían — esto las agrega sin tocar los datos
+    que ya hay.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    new_columns = {"format_id": "TEXT", "audio_format": "TEXT", "audio_bitrate": "TEXT"}
+    for name, col_type in new_columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {col_type}")
 
 
 def fts_enabled() -> bool:
@@ -244,16 +260,20 @@ def create_job(
     url: str,
     audio_only: bool,
     quality: str,
+    format_id: Optional[str] = None,
+    audio_format: Optional[str] = None,
+    audio_bitrate: Optional[str] = None,
 ) -> None:
     now = _now_iso()
     with _LOCK:
         conn.execute(
             """
-            INSERT INTO jobs (id, url, audio_only, quality, state, progress, message,
-                               item_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'en_cola', 0, 'En cola…', NULL, ?, ?)
+            INSERT INTO jobs (id, url, audio_only, quality, format_id, audio_format,
+                               audio_bitrate, state, progress, message, item_id,
+                               created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'en_cola', 0, 'En cola…', NULL, ?, ?)
             """,
-            (job_id, url, int(audio_only), quality, now, now),
+            (job_id, url, int(audio_only), quality, format_id, audio_format, audio_bitrate, now, now),
         )
         conn.commit()
 

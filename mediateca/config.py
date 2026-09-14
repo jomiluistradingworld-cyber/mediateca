@@ -27,6 +27,12 @@ DEFAULTS: dict = {
     "sleep_interval": 0,
     "max_sleep_interval": 0,
     "rate_limit_kbps": 0,
+    # Cuántos fragmentos de un mismo video se bajan en paralelo (HLS/DASH).
+    # 1 = comportamiento clásico, secuencial.
+    "concurrent_fragments": 1,
+    # Incrustar metadata (título, autor, descripción), capítulos y la
+    # miniatura como carátula dentro del propio archivo final.
+    "embed_metadata": True,
     "host": "127.0.0.1",
     "port": 8420,
 }
@@ -43,12 +49,23 @@ class Config:
     sleep_interval: float
     max_sleep_interval: float
     rate_limit_kbps: int
+    concurrent_fragments: int
+    embed_metadata: bool
     host: str
     port: int
 
     @property
     def config_path(self) -> Path:
         return get_config_dir() / "config.toml"
+
+    @property
+    def cookies_path(self) -> Path:
+        """Cookies (formato Netscape) para descargar contenido privado o
+        restringido por edad. Es un archivo aparte, no un valor del TOML,
+        porque son datos sensibles (equivalen a estar logueado) y así no
+        terminan mostrándose sin querer si alguien comparte su config.toml.
+        """
+        return get_config_dir() / "cookies.txt"
 
 
 def get_config_dir() -> Path:
@@ -102,6 +119,8 @@ def load_config() -> Config:
         sleep_interval=float(merged["sleep_interval"]),
         max_sleep_interval=float(merged["max_sleep_interval"]),
         rate_limit_kbps=int(merged["rate_limit_kbps"]),
+        concurrent_fragments=int(merged["concurrent_fragments"]),
+        embed_metadata=bool(merged["embed_metadata"]),
         host=str(merged["host"]),
         port=int(merged["port"]),
     )

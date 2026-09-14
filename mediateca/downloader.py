@@ -50,6 +50,9 @@ def build_ydl_opts(
     audio_only: bool,
     quality: str,
     progress_hook: Optional[Callable[[dict], None]] = None,
+    format_id: Optional[str] = None,
+    audio_format: Optional[str] = None,
+    audio_bitrate: Optional[str] = None,
 ) -> dict[str, Any]:
     outtmpl = str(config.library_path / OUTTMPL)
 
@@ -76,22 +79,49 @@ def build_ydl_opts(
         opts["progress_hooks"] = [progress_hook]
 
     if audio_only:
-        opts["format"] = "bestaudio/best"
+        # format_id manda si el usuario eligió un formato de audio concreto
+        # en la vista previa; si no, se baja el mejor audio disponible y se
+        # convierte con FFmpegExtractAudio como hasta ahora.
+        opts["format"] = format_id or "bestaudio/best"
         opts["postprocessors"].append(
             {
                 "key": "FFmpegExtractAudio",
-                "preferredcodec": config.default_audio_format,
-                "preferredquality": "192",
+                "preferredcodec": audio_format or config.default_audio_format,
+                "preferredquality": audio_bitrate or "192",
             }
         )
     else:
-        opts["format"] = _quality_to_format(quality)
+        opts["format"] = format_id or _quality_to_format(quality)
         opts["merge_output_format"] = "mp4"
 
     if config.download_thumbnails:
         opts["postprocessors"].append(
             {"key": "FFmpegThumbnailsConvertor", "format": "jpg"}
         )
+
+    if config.embed_metadata:
+        # Título, autor, descripción y capítulos incrustados en el propio
+        # archivo (no solo en la base de datos de mediateca).
+        opts["postprocessors"].append(
+            {"key": "FFmpegMetadata", "add_metadata": True, "add_chapters": True}
+        )
+        if config.download_thumbnails:
+            # already_have_thumbnail=True: usa el archivo que ya bajamos
+            # arriba (writethumbnail) y NO lo borra después de incrustarlo,
+            # porque mediateca también lo necesita como miniatura de la
+            # tarjeta en la biblioteca.
+            opts["postprocessors"].append(
+                {"key": "EmbedThumbnail", "already_have_thumbnail": True}
+            )
+
+    # Varios fragmentos del mismo video en paralelo (HLS/DASH). 1 = como
+    # hasta ahora, secuencial.
+    if config.concurrent_fragments > 1:
+        opts["concurrent_fragment_downloads"] = config.concurrent_fragments
+
+    # Cookies para contenido privado o restringido por edad (ver Ajustes).
+    if config.cookies_path.exists():
+        opts["cookiefile"] = str(config.cookies_path)
 
     # Mitigación de bloqueos por sitio (YouTube y otros cortan/limitan a
     # quien pide demasiado, muy seguido). Con los valores por defecto (0)
@@ -104,6 +134,109 @@ def build_ydl_opts(
         opts["ratelimit"] = config.rate_limit_kbps * 1024  # yt-dlp usa bytes/s
 
     return opts
+
+
+def _base_probe_opts(config: Config) -> dict[str, Any]:
+    opts: dict[str, Any] = {"quiet": True, "no_warnings": True, "skip_download": True}
+    if config.cookies_path.exists():
+        opts["cookiefile"] = str(config.cookies_path)
+    return opts
+
+
+def probe(url: str, config: Config) -> dict[str, Any]:
+    """Consulta metadata de `url` SIN descargar nada.
+
+    Para un video suelto: título, autor, duración, miniatura y la lista
+    real de formatos disponibles (para elegir uno exacto en vez de a
+    ciegas). Para una lista de reproducción o canal: cuántos videos tiene
+    y el título/URL de cada uno, para poder elegir cuáles bajar.
+    """
+    base_opts = _base_probe_opts(config)
+
+    try:
+        # process=False: una "espiada" rápida y barata, sin resolver
+        # formatos ni bajar nada, solo para saber si esto es un video
+        # suelto o una lista de reproducción/canal.
+        with yt_dlp.YoutubeDL(base_opts) as ydl:
+            shallow = ydl.extract_info(url, download=False, process=False)
+    except yt_dlp.utils.DownloadError as e:
+        raise DownloadError(_clarify_error(str(e))) from e
+
+    if shallow is None:
+        raise DownloadError("No se pudo obtener información de esa URL.")
+
+    if shallow.get("_type") in ("playlist", "multi_video"):
+        try:
+            with yt_dlp.YoutubeDL({**base_opts, "extract_flat": "in_playlist"}) as ydl:
+                full = ydl.extract_info(url, download=False)
+        except yt_dlp.utils.DownloadError as e:
+            raise DownloadError(_clarify_error(str(e))) from e
+
+        entries = []
+        for entry in (full or {}).get("entries") or []:
+            if not entry:
+                continue
+            entry_url = entry.get("url") or entry.get("webpage_url")
+            if not entry_url:
+                continue
+            entries.append(
+                {
+                    "url": entry_url,
+                    "title": entry.get("title") or "(sin título)",
+                    "duration": entry.get("duration"),
+                    "thumbnail": entry.get("thumbnail"),
+                }
+            )
+        return {
+            "is_playlist": True,
+            "title": (full or {}).get("title") or "Lista de reproducción",
+            "uploader": (full or {}).get("uploader") or (full or {}).get("channel"),
+            "duration": None,
+            "thumbnail": (full or {}).get("thumbnail"),
+            "entry_count": len(entries),
+            "entries": entries,
+            "formats": [],
+        }
+
+    # Video suelto: aquí sí hace falta la extracción completa para tener
+    # la lista real de formatos (calidad, codec, si trae audio o no...).
+    try:
+        with yt_dlp.YoutubeDL({**base_opts, "noplaylist": True}) as ydl:
+            full = ydl.extract_info(url, download=False)
+    except yt_dlp.utils.DownloadError as e:
+        raise DownloadError(_clarify_error(str(e))) from e
+
+    if full is None:
+        raise DownloadError("No se pudo obtener información de esa URL.")
+
+    formats = []
+    for f in full.get("formats") or []:
+        if f.get("vcodec") == "none" and f.get("acodec") == "none":
+            continue  # entradas de solo metadata (miniaturas, storyboards…)
+        height = f.get("height")
+        formats.append(
+            {
+                "format_id": f.get("format_id"),
+                "ext": f.get("ext"),
+                "resolution": f.get("resolution") or (f"{height}p" if height else "audio"),
+                "fps": f.get("fps"),
+                "vcodec": None if f.get("vcodec") == "none" else f.get("vcodec"),
+                "acodec": None if f.get("acodec") == "none" else f.get("acodec"),
+                "filesize": f.get("filesize") or f.get("filesize_approx"),
+                "format_note": f.get("format_note"),
+            }
+        )
+
+    return {
+        "is_playlist": False,
+        "title": full.get("title") or "(sin título)",
+        "uploader": full.get("uploader") or full.get("channel"),
+        "duration": full.get("duration"),
+        "thumbnail": full.get("thumbnail"),
+        "entry_count": None,
+        "entries": [],
+        "formats": formats,
+    }
 
 
 def _final_filepath(info: dict) -> Optional[str]:
@@ -156,8 +289,16 @@ def download(
     quality: str = "best",
     on_progress: Optional[ProgressCallback] = None,
     cancel_event: Optional[threading.Event] = None,
+    format_id: Optional[str] = None,
+    audio_format: Optional[str] = None,
+    audio_bitrate: Optional[str] = None,
 ) -> dict[str, Any]:
     """Descarga `url` y devuelve un dict listo para db.insert_item().
+
+    `format_id` viene de la vista previa (/api/probe) cuando el usuario
+    eligió un formato exacto en vez de una calidad genérica; si no se pasa,
+    se usa `quality` como antes. `audio_format`/`audio_bitrate` sobrescriben
+    para esta descarga puntual los valores por defecto de Ajustes.
 
     Si `cancel_event` se activa mientras la descarga está en curso, se
     interrumpe limpiamente (usando el mecanismo nativo de yt-dlp) dejando
@@ -194,7 +335,10 @@ def download(
             # progreso ya alcanzado para no confundir con un 0% falso.
             on_progress(None, "Corte de red, reintentando automáticamente…")
 
-    ydl_opts = build_ydl_opts(config, audio_only, quality, progress_hook=_hook)
+    ydl_opts = build_ydl_opts(
+        config, audio_only, quality, progress_hook=_hook,
+        format_id=format_id, audio_format=audio_format, audio_bitrate=audio_bitrate,
+    )
     config.library_path.mkdir(parents=True, exist_ok=True)
 
     try:

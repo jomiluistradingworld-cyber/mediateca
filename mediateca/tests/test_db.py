@@ -126,6 +126,46 @@ def test_create_and_get_job(conn):
     assert row is not None
     assert row["state"] == "en_cola"
     assert row["progress"] == 0
+    assert row["format_id"] is None
+
+
+def test_create_job_persists_format_and_audio_overrides(conn):
+    db.create_job(
+        conn, "job1", "https://example.com/x", True, "best",
+        format_id="137+140", audio_format="flac", audio_bitrate="320",
+    )
+    row = db.get_job(conn, "job1")
+    assert row["format_id"] == "137+140"
+    assert row["audio_format"] == "flac"
+    assert row["audio_bitrate"] == "320"
+
+
+def test_jobs_table_migration_adds_missing_columns(tmp_path):
+    # Simula una base de datos creada con una versión anterior de mediateca
+    # (sin format_id/audio_format/audio_bitrate) y confirma que init_db la
+    # pone al día sin tocar los datos que ya había.
+    old_conn = db.get_connection(tmp_path / "old.db")
+    old_conn.executescript("""
+        CREATE TABLE jobs (
+            id TEXT PRIMARY KEY, url TEXT NOT NULL, audio_only INTEGER NOT NULL DEFAULT 0,
+            quality TEXT NOT NULL DEFAULT 'best', state TEXT NOT NULL DEFAULT 'en_cola',
+            progress REAL NOT NULL DEFAULT 0, message TEXT, item_id INTEGER,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+    """)
+    old_conn.execute(
+        "INSERT INTO jobs (id, url, created_at, updated_at) VALUES ('viejo', 'https://x', 'a', 'b')"
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    conn = db.get_connection(tmp_path / "old.db")
+    db.init_db(conn)  # aquí corre la migración
+
+    row = db.get_job(conn, "viejo")
+    assert row["url"] == "https://x"  # el dato viejo sigue intacto
+    assert row["format_id"] is None  # la columna nueva existe, vacía
+    conn.close()
 
 
 def test_update_job(conn):

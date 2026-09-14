@@ -135,11 +135,147 @@ const mediateca = (() => {
       ${viewLink}`;
   }
 
+  function fmtFilesize(bytes) {
+    if (!bytes) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes, i = 0;
+    while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+    return `${size.toFixed(1)} ${units[i]}`;
+  }
+
+  function formatOptionLabel(f) {
+    const bits = [f.resolution || "audio"];
+    if (f.fps) bits.push(`${f.fps}fps`);
+    if (f.vcodec) bits.push(f.vcodec);
+    if (f.acodec && !f.vcodec) bits.push(f.acodec);
+    else if (!f.acodec && f.vcodec) bits.push("sin audio");
+    if (f.ext) bits.push(f.ext);
+    const size = fmtFilesize(f.filesize);
+    if (size) bits.push(size);
+    return `${bits.join(" · ")}${f.format_note ? " (" + f.format_note + ")" : ""}`;
+  }
+
   function initDownloadPage() {
     const form = document.getElementById("download-form");
     const jobsEl = document.getElementById("jobs");
     const emptyMsg = document.getElementById("jobs-empty");
+    const urlsField = document.getElementById("urls");
+    const audioOnlyBox = document.getElementById("audio-only");
+    const audioOptions = document.getElementById("audio-options");
+    const previewBtn = document.getElementById("preview-btn");
+    const previewEl = document.getElementById("preview");
     const pollers = {};
+    // Vista previa activa (si la hay): recuerda para qué URL exacta se
+    // pidió, para no usarla por accidente si el usuario cambió el texto.
+    let preview = null;
+
+    function toggleAudioOptions() {
+      audioOptions.style.display = audioOnlyBox.checked ? "flex" : "none";
+    }
+    audioOnlyBox.addEventListener("change", toggleAudioOptions);
+    toggleAudioOptions();
+
+    function clearPreview() {
+      preview = null;
+      previewEl.style.display = "none";
+      previewEl.innerHTML = "";
+    }
+    // Si el usuario toca el texto, la vista previa que tenía en pantalla
+    // queda desactualizada (podría ser de otra URL, u otro video).
+    urlsField.addEventListener("input", clearPreview);
+
+    function singleUrlOrNull() {
+      const lines = urlsField.value.split("\n").map((u) => u.trim()).filter(Boolean);
+      return lines.length === 1 ? lines[0] : null;
+    }
+
+    function renderPreviewVideo(data, forUrl) {
+      preview = { type: "video", forUrl, formats: data.formats };
+      const thumb = data.thumbnail
+        ? `<img class="preview-thumb" src="${escapeHtml(data.thumbnail)}" alt="">`
+        : "";
+      const options = data.formats.length
+        ? data.formats.map(
+            (f) => `<option value="${escapeHtml(f.format_id || "")}">${escapeHtml(formatOptionLabel(f))}</option>`
+          ).join("")
+        : `<option value="">(sin formatos detallados; se usará la calidad de arriba)</option>`;
+      previewEl.innerHTML = `
+        <div class="preview-head">
+          ${thumb}
+          <div>
+            <div class="preview-title">${escapeHtml(data.title)}</div>
+            <div class="muted small">${escapeHtml(data.uploader || "")}${data.duration ? " · " + fmtDuration(data.duration) : ""}</div>
+          </div>
+        </div>
+        <label class="field">
+          <span>Formato exacto</span>
+          <select id="format-select">
+            <option value="">Usar la calidad elegida arriba</option>
+            ${options}
+          </select>
+        </label>
+        <p class="muted small">Si eliges un formato de solo audio, "Solo audio" arriba lo convierte a tu formato preferido; si no, se guarda tal cual.</p>
+      `;
+      previewEl.style.display = "block";
+    }
+
+    function renderPreviewPlaylist(data, forUrl) {
+      preview = { type: "playlist", forUrl, entries: data.entries };
+      const rows = data.entries.map(
+        (e, i) => `
+          <label class="preview-entry">
+            <input type="checkbox" class="preview-entry-check" data-index="${i}" checked>
+            <span>${escapeHtml(e.title)}</span>
+            ${e.duration ? `<span class="muted small">${fmtDuration(e.duration)}</span>` : ""}
+          </label>`
+      ).join("");
+      previewEl.innerHTML = `
+        <div class="preview-title">Lista de reproducción: ${escapeHtml(data.title)}</div>
+        <div class="muted small">${data.entry_count} videos encontrados · ${escapeHtml(data.uploader || "")}</div>
+        <div class="preview-select-all">
+          <button type="button" class="btn-link" data-check="all">Marcar todos</button>
+          <button type="button" class="btn-link" data-check="none">Desmarcar todos</button>
+        </div>
+        <div class="preview-entry-list">${rows}</div>
+      `;
+      previewEl.style.display = "block";
+      previewEl.querySelectorAll("[data-check]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const checked = btn.dataset.check === "all";
+          previewEl.querySelectorAll(".preview-entry-check").forEach((cb) => (cb.checked = checked));
+        });
+      });
+    }
+
+    previewBtn.addEventListener("click", async () => {
+      const url = singleUrlOrNull();
+      if (!url) {
+        clearPreview();
+        previewEl.innerHTML = `<p class="muted small">Pega exactamente una URL para poder ver la vista previa.</p>`;
+        previewEl.style.display = "block";
+        return;
+      }
+      previewBtn.disabled = true;
+      previewEl.style.display = "block";
+      previewEl.innerHTML = `<p class="muted small">Consultando…</p>`;
+      try {
+        const res = await fetch("/api/probe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "No se pudo obtener información de esa URL.");
+        if (data.is_playlist) renderPreviewPlaylist(data, url);
+        else renderPreviewVideo(data, url);
+      } catch (err) {
+        clearPreview();
+        previewEl.innerHTML = `<p class="job-message" style="color:var(--danger)">${escapeHtml(String(err.message || err))}</p>`;
+        previewEl.style.display = "block";
+      } finally {
+        previewBtn.disabled = false;
+      }
+    });
 
     function setEmptyVisible(visible) {
       if (emptyMsg) emptyMsg.style.display = visible ? "block" : "none";
@@ -169,7 +305,7 @@ const mediateca = (() => {
       // Antes: setInterval haciendo fetch a /api/jobs/<id> cada segundo,
       // por cada job activo, por cada pestaña abierta. Ahora: una única
       // conexión persistente (Server-Sent Events) por job; el servidor
-      // solo manda un evento cuando algo cambió de verdad.
+      // solo manda un evento nuevo cuando algo cambió de verdad.
       stopPolling(jobId);
       const source = new EventSource(`/api/jobs/${jobId}/stream`);
       pollers[jobId] = source;
@@ -230,36 +366,54 @@ const mediateca = (() => {
       }
     });
 
+    async function createDownloadJob(url, extra) {
+      try {
+        const res = await fetch("/api/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, ...extra }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "No se pudo iniciar la descarga");
+        upsertJobRow({ job_id: data.job_id, url, state: "en_cola", progress: 0, message: "En cola…", item_id: null });
+        pollJob(data.job_id);
+      } catch (err) {
+        const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        upsertJobRow({ job_id: tempId, url, state: "error", progress: 0, message: String(err.message || err), item_id: null });
+      }
+    }
+
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      const urls = document
-        .getElementById("urls")
-        .value.split("\n")
-        .map((u) => u.trim())
-        .filter(Boolean);
-      if (!urls.length) return;
-
       const quality = document.getElementById("quality").value;
-      const audioOnly = document.getElementById("audio-only").checked;
+      const audioOnly = audioOnlyBox.checked;
+      const audioFormat = document.getElementById("audio-format").value || undefined;
+      const audioBitrate = document.getElementById("audio-bitrate").value || undefined;
+      const baseExtra = { audio_only: audioOnly, quality, audio_format: audioFormat, audio_bitrate: audioBitrate };
 
-      for (const url of urls) {
-        try {
-          const res = await fetch("/api/download", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url, audio_only: audioOnly, quality }),
-          });
-          if (!res.ok) throw new Error("No se pudo iniciar la descarga");
-          const { job_id } = await res.json();
-          upsertJobRow({ job_id, url, state: "en_cola", progress: 0, message: "En cola…", item_id: null });
-          pollJob(job_id);
-        } catch (err) {
-          const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          upsertJobRow({ job_id: tempId, url, state: "error", progress: 0, message: String(err), item_id: null });
+      const currentUrl = singleUrlOrNull();
+      const previewMatches = preview && currentUrl && preview.forUrl === currentUrl;
+
+      if (previewMatches && preview.type === "playlist") {
+        const checked = Array.from(previewEl.querySelectorAll(".preview-entry-check"))
+          .map((cb, i) => (cb.checked ? preview.entries[i] : null))
+          .filter(Boolean);
+        for (const entry of checked) {
+          await createDownloadJob(entry.url, baseExtra);
+        }
+      } else if (previewMatches && preview.type === "video") {
+        const formatId = document.getElementById("format-select")?.value || undefined;
+        await createDownloadJob(currentUrl, { ...baseExtra, format_id: formatId });
+      } else {
+        const urls = urlsField.value.split("\n").map((u) => u.trim()).filter(Boolean);
+        if (!urls.length) return;
+        for (const url of urls) {
+          await createDownloadJob(url, baseExtra);
         }
       }
 
-      document.getElementById("urls").value = "";
+      urlsField.value = "";
+      clearPreview();
     });
   }
 

@@ -305,6 +305,70 @@ button {
   margin-bottom: 20px;
 }
 
+/* ---------- vista previa de descarga ---------- */
+
+.preview-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preview-head {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.preview-thumb {
+  width: 120px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.preview-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.preview-select-all {
+  display: flex;
+  gap: 16px;
+}
+
+.preview-entry-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.preview-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.preview-entry input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.preview-entry span:nth-child(2) {
+  flex: 1;
+}
+
 /* ---------- jobs (progreso de descarga) ---------- */
 
 .jobs { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }

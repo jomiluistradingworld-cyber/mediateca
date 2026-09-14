@@ -10,7 +10,7 @@
 <p class="notice-success">Ajustes guardados.</p>
 {% endif %}
 
-<form method="post" action="/settings" class="settings-form">
+<form method="post" action="/settings" class="settings-form" enctype="multipart/form-data">
   <label class="field">
     <span>Carpeta de la biblioteca</span>
     <input type="text" name="library_path" value="{{ config.library_path }}">
@@ -65,6 +65,48 @@
       <span>Límite de velocidad de descarga (KB/s, 0 = sin límite)</span>
       <input type="number" name="rate_limit_kbps" min="0" value="{{ config.rate_limit_kbps }}">
     </label>
+  </fieldset>
+
+  <fieldset class="settings-fieldset">
+    <legend>Rendimiento y calidad del archivo final</legend>
+
+    <label class="field">
+      <span>Fragmentos en paralelo por video (1 = como siempre, secuencial)</span>
+      <input type="number" name="concurrent_fragments" min="1" max="16" value="{{ config.concurrent_fragments }}">
+    </label>
+    <p class="muted small">
+      Solo acelera videos servidos en fragmentos (HLS/DASH, el caso más
+      común hoy). Valores muy altos no ayudan más allá de tu ancho de
+      banda real y pueden hacer más ruido de peticiones al sitio.
+    </p>
+
+    <label class="checkbox-field">
+      <input type="checkbox" name="embed_metadata" {{ "checked" if config.embed_metadata else "" }}>
+      <span>Incrustar título, autor, capítulos y carátula en el propio archivo</span>
+    </label>
+  </fieldset>
+
+  <fieldset class="settings-fieldset">
+    <legend>Cookies para contenido privado o restringido por edad</legend>
+    <p class="muted small">
+      {% if cookies_configured %}
+      ✓ Tienes cookies configuradas ahora mismo.
+      {% else %}
+      Sin cookies configuradas: solo se puede descargar contenido público.
+      {% endif %}
+      Exporta tus cookies del navegador (p. ej. con la extensión
+      "Get cookies.txt") estando logueado, y sube ese archivo aquí.
+    </p>
+    <label class="field">
+      <span>Archivo cookies.txt</span>
+      <input type="file" name="cookies_file" accept=".txt">
+    </label>
+    {% if cookies_configured %}
+    <label class="checkbox-field">
+      <input type="checkbox" name="remove_cookies">
+      <span>Quitar las cookies configuradas</span>
+    </label>
+    {% endif %}
   </fieldset>
 
   <button type="submit" class="btn-primary">Guardar cambios</button>

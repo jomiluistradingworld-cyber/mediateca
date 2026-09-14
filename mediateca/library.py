@@ -24,6 +24,9 @@ def add_from_url(
     quality: Optional[str] = None,
     on_progress=None,
     cancel_event=None,
+    format_id: Optional[str] = None,
+    audio_format: Optional[str] = None,
+    audio_bitrate: Optional[str] = None,
 ) -> int:
     item = downloader.download(
         url,
@@ -32,8 +35,17 @@ def add_from_url(
         quality=quality or config.default_quality,
         on_progress=on_progress,
         cancel_event=cancel_event,
+        format_id=format_id,
+        audio_format=audio_format,
+        audio_bitrate=audio_bitrate,
     )
     return db.insert_item(conn, item)
+
+
+def probe_url(config: Config, url: str) -> dict:
+    """Vista previa sin descargar: metadata, formatos disponibles, o
+    entradas si `url` es una lista de reproducción/canal."""
+    return downloader.probe(url, config)
 
 
 def list_library(

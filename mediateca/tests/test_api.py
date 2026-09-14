@@ -13,12 +13,12 @@ def test_download_rejects_invalid_url_scheme(app_client):
     assert res.status_code == 422
 
 
-def test_download_accepts_valid_url_and_creates_job(app_client, monkeypatch):
+def test_download_accepts_valid_url_and_creates_job(app_client):
     client, app = app_client
 
-    # No queremos que el test dispare una descarga real de yt-dlp: el
-    # worker corre en un hilo del executor, así que basta con dejar que el
-    # job se cree; no hace falta esperar a que "termine" para este test.
+    # La descarga real está mockeada globalmente (ver fixture
+    # _no_real_downloads en conftest.py); esto solo confirma que el job se
+    # crea y queda consultable.
     res = client.post("/api/download", json={"url": "https://example.com/v"})
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -98,7 +98,113 @@ def test_job_stream_unknown_job_sends_not_found(app_client):
     assert "event: not_found" in content
 
 
-def test_settings_save_rebuilds_executor_on_concurrency_change(app_client, monkeypatch):
+def test_probe_endpoint_returns_video_info(app_client, monkeypatch):
+    client, app = app_client
+    import mediateca.web.app as app_module
+
+    fake_result = {
+        "is_playlist": False, "title": "Video de prueba", "uploader": "Canal",
+        "duration": 120, "thumbnail": None, "entry_count": None, "entries": [],
+        "formats": [{"format_id": "137", "ext": "mp4", "resolution": "1080p",
+                      "fps": 30, "vcodec": "avc1", "acodec": None,
+                      "filesize": 100, "format_note": None}],
+    }
+    monkeypatch.setattr(app_module.library, "probe_url", lambda cfg, url: fake_result)
+
+    res = client.post("/api/probe", json={"url": "https://example.com/v"})
+    assert res.status_code == 200
+    assert res.json()["title"] == "Video de prueba"
+
+
+def test_probe_endpoint_rejects_bad_url(app_client):
+    client, app = app_client
+    res = client.post("/api/probe", json={"url": "javascript:alert(1)"})
+    assert res.status_code == 422
+
+
+def test_probe_endpoint_surfaces_download_error(app_client, monkeypatch):
+    client, app = app_client
+    import mediateca.web.app as app_module
+    from mediateca.downloader import DownloadError
+
+    def boom(cfg, url):
+        raise DownloadError("ese video no existe")
+
+    monkeypatch.setattr(app_module.library, "probe_url", boom)
+    res = client.post("/api/probe", json={"url": "https://example.com/v"})
+    assert res.status_code == 422
+    assert "no existe" in res.json()["detail"]
+
+
+def test_download_persists_format_overrides_in_job(app_client):
+    client, app = app_client
+    res = client.post(
+        "/api/download",
+        json={"url": "https://example.com/v", "audio_only": True,
+              "format_id": "137+140", "audio_format": "flac", "audio_bitrate": "320"},
+    )
+    job_id = res.json()["job_id"]
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["format_id"] == "137+140"
+    assert job["audio_format"] == "flac"
+    assert job["audio_bitrate"] == "320"
+
+
+def test_settings_save_persists_new_fields(app_client, monkeypatch):
+    client, app = app_client
+    import mediateca.web.app as app_module
+
+    monkeypatch.setattr(app_module, "save_config", lambda cfg: None)
+    res = client.post(
+        "/settings",
+        data={
+            "library_path": str(app.state.config.library_path),
+            "default_quality": "best",
+            "default_audio_format": "mp3",
+            "concurrent_downloads": "1",
+            "concurrent_fragments": "5",
+            "embed_metadata": "on",
+        },
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert app.state.config.concurrent_fragments == 5
+    assert app.state.config.embed_metadata is True
+
+
+def test_settings_save_uploads_and_removes_cookies(app_client, monkeypatch):
+    client, app = app_client
+    import mediateca.web.app as app_module
+
+    monkeypatch.setattr(app_module, "save_config", lambda cfg: None)
+
+    res = client.post(
+        "/settings",
+        data={
+            "library_path": str(app.state.config.library_path),
+            "default_quality": "best",
+            "default_audio_format": "mp3",
+            "concurrent_downloads": "1",
+        },
+        files={"cookies_file": ("cookies.txt", b"# Netscape HTTP Cookie File\n", "text/plain")},
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert app.state.config.cookies_path.exists()
+
+    res2 = client.post(
+        "/settings",
+        data={
+            "library_path": str(app.state.config.library_path),
+            "default_quality": "best",
+            "default_audio_format": "mp3",
+            "concurrent_downloads": "1",
+            "remove_cookies": "on",
+        },
+        follow_redirects=False,
+    )
+    assert res2.status_code == 303
+    assert not app.state.config.cookies_path.exists()
     client, app = app_client
     import mediateca.web.app as app_module
 

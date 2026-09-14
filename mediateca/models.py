@@ -18,21 +18,68 @@ JobState = Literal[
 _ALLOWED_URL_SCHEMES = ("http", "https")
 
 
+def _check_url_scheme(v: str) -> str:
+    v = v.strip()
+    parsed = urlparse(v)
+    if parsed.scheme not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
+        raise ValueError(
+            "La URL debe empezar por http:// o https:// e incluir un dominio válido."
+        )
+    return v
+
+
 class DownloadRequest(BaseModel):
     url: str
     audio_only: bool = False
     quality: str = "best"
+    # Si vienen de la vista previa (el usuario eligió un formato exacto en
+    # /download antes de confirmar), mandan sobre quality/audio_only.
+    format_id: Optional[str] = None
+    audio_format: Optional[str] = None
+    audio_bitrate: Optional[str] = None
 
     @field_validator("url")
     @classmethod
     def _validar_esquema_url(cls, v: str) -> str:
-        v = v.strip()
-        parsed = urlparse(v)
-        if parsed.scheme not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
-            raise ValueError(
-                "La URL debe empezar por http:// o https:// e incluir un dominio válido."
-            )
-        return v
+        return _check_url_scheme(v)
+
+
+class ProbeRequest(BaseModel):
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def _validar_esquema_url(cls, v: str) -> str:
+        return _check_url_scheme(v)
+
+
+class ProbeFormat(BaseModel):
+    format_id: Optional[str] = None
+    ext: Optional[str] = None
+    resolution: Optional[str] = None
+    fps: Optional[float] = None
+    vcodec: Optional[str] = None
+    acodec: Optional[str] = None
+    filesize: Optional[int] = None
+    format_note: Optional[str] = None
+
+
+class ProbeEntry(BaseModel):
+    url: str
+    title: str
+    duration: Optional[int] = None
+    thumbnail: Optional[str] = None
+
+
+class ProbeResult(BaseModel):
+    is_playlist: bool
+    title: str
+    uploader: Optional[str] = None
+    duration: Optional[int] = None
+    thumbnail: Optional[str] = None
+    entry_count: Optional[int] = None
+    entries: list[ProbeEntry] = Field(default_factory=list)
+    formats: list[ProbeFormat] = Field(default_factory=list)
 
 
 class JobStatus(BaseModel):
@@ -40,6 +87,9 @@ class JobStatus(BaseModel):
     url: str
     audio_only: bool = False
     quality: str = "best"
+    format_id: Optional[str] = None
+    audio_format: Optional[str] = None
+    audio_bitrate: Optional[str] = None
     state: JobState
     progress: float = 0.0
     message: str = ""
