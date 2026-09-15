@@ -12,3 +12,4 @@ mediateca.zip
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+no_subir/
