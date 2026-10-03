@@ -368,3 +368,9 @@ def _now_iso() -> str:
     # normal durante una descarga activa) podían quedar empatadas y
     # ordenarse de forma indefinida.
     return dt.datetime.now().isoformat(timespec="microseconds")
+
+
+def close_connection(conn: sqlite3.Connection) -> None:
+    """Cierra la conexión compartida esperando a que ningún hilo la esté usando."""
+    with _LOCK:
+        conn.close()
