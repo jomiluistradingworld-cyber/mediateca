@@ -80,7 +80,15 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
-        app.state.db_conn.close()
+        # Orden de cierre importante: primero se pide a los workers que paren y se
+        # espera a que terminen; solo entonces se cierra la conexión compartida.
+        # Cerrarla con un worker aún dentro de update_job() provoca un segfault
+        # intermitente de sqlite3 (exit 139 en CI).
+        with CANCEL_EVENTS_LOCK:
+            for ev in CANCEL_EVENTS.values():
+                ev.set()
+        app.state.executor.shutdown(wait=True, cancel_futures=True)
+        library.db.close_connection(app.state.db_conn)
 
     app = FastAPI(title="mediateca", lifespan=lifespan)
     app.state.config = config
